@@ -341,7 +341,8 @@ class Proxy(threading.Thread):
                 self.server.connect()
             except Exception as e:
                 self.server.isClosed = True
-                raise ProxyConnectionFailed(host, port, repr(e))
+                # raise ProxyConnectionFailed(host, port, repr(e))
+                raise e
 
             if self.request.method == b"CONNECT":
                 self.client.send(self.connection_established_pkt)
@@ -373,7 +374,12 @@ class Proxy(threading.Thread):
             try:
                 self._processRequest(data)
             except Exception as e:
-                logger.exception(e)
+                if not isinstance(e, ConnectionResetError) and \
+                        not isinstance(e, TimeoutError) and \
+                        not isinstance(e, socket.gaierror) and \
+                        not isinstance(e, ConnectionAbortedError):
+                    logger.exception(e)
+
                 self.client.queue(CRLF.join([
                     b"HTTP/1.1 502 Bad Gateway",
                     b"Proxy-agent: proxy",
@@ -423,10 +429,8 @@ class Proxy(threading.Thread):
         while True:
             rlist, wlist, xlist = self._getLists()
 
-            # windows could accept three empty
-            if len(rlist) == 0 and len(wlist) == 0 and len(xlist) == 0:
-                time.sleep(1)
-                continue
+            # windows may not accept three empty
+
             r, w, x = select.select(rlist, wlist, xlist, 1)
 
             self._process_wlist(w)
@@ -469,7 +473,8 @@ class Connection(object):
         except ConnectionResetError as e:
             pass
         except Exception as e:
-            logger.exception("Exception when send data: %r" % e)
+            if isinstance(self.conn, socket):
+                logger.exception("Exception when send data: %r" % e)
 
         return size
 
@@ -527,26 +532,10 @@ class Server(Connection):
         self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     def connect(self):
-        try:
-            self.conn.connect(self.addr)
-        except TimeoutError as e:
-            pass
-        except ConnectionResetError as e:
-            pass
-        except socket.gaierror as e:
-            pass
-        except Exception as e:
-            logger.exception("Exception when server connect to remote: %r" % e)
+        self.conn.connect(self.addr)
 
     def wrapToSSL(self):
-        try:
-            self.conn = ssl.wrap_socket(self.conn)
-        except ConnectionResetError as e:
-            pass
-        except ConnectionAbortedError as e:
-            pass
-        except Exception as e:
-            logger.exception("Exception when server wrap_socket: %r" % e)
+        self.conn = ssl.wrap_socket(self.conn)
         
 
 class Client(Connection):
@@ -557,16 +546,7 @@ class Client(Connection):
         self.addr = addr
 
     def wrapToSSL(self, certfile):
-        try:
-            self.conn = ssl.wrap_socket(self.conn, certfile=certfile, server_side=True)
-        except ConnectionResetError as e:
-            pass
-        except ConnectionAbortedError as e:
-            pass
-        except OSError as e:
-            pass
-        except Exception as e:
-            logger.exception("Exception when wrap client conn: %r" % e)
+        self.conn = ssl.wrap_socket(self.conn, certfile=certfile, server_side=True)
         
 
 class Monitor(Server, threading.Thread):
