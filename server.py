@@ -279,7 +279,7 @@ class Proxy(threading.Thread):
 
         isUseChunkLen = True
 
-        if self.response.state < HTTP_PARSER_STATE_HEADERS_COMPLETE or self.hasSentToMonitor:
+        if self.response.state < HTTP_PARSER_STATE_HEADERS_COMPLETE or self.hasSentToMonitor or not self.request.url:
             return
 
         url = self.request.url.geturl()
@@ -301,7 +301,8 @@ class Proxy(threading.Thread):
                         page_content = zlib.decompress(self.response.body, 16 + zlib.MAX_WBITS)
                         contentLen = str(len(page_content))
                     except zlib.error as ziperror:
-                        logger.exception("Exception when zlib: %r" % ziperror)
+                        pass
+                        # logger.exception("Exception when zlib: %r" % ziperror)
             else:
                 return
 
@@ -319,7 +320,7 @@ class Proxy(threading.Thread):
             self.server.queue(data)
             return
 
-        if self.request.url.geturl() == b"http://proxy.ca/":
+        if self.request.url and self.request.url.geturl() == b"http://proxy.ca/":
             self.client.queue(self._getCACert())
             return
 
@@ -421,6 +422,11 @@ class Proxy(threading.Thread):
     def _process(self):
         while True:
             rlist, wlist, xlist = self._getLists()
+
+            # windows could accept three empty
+            if len(rlist) == 0 and len(wlist) == 0 and len(xlist) == 0:
+                time.sleep(1)
+                continue
             r, w, x = select.select(rlist, wlist, xlist, 1)
 
             self._process_wlist(w)
@@ -473,7 +479,7 @@ class Connection(object):
         try:
             data = self.conn.recv(BUFFER_SIZE)
         except ssl.SSLError as e:
-            if e.error != ssl.SSL_ERROR_WANT_READ:
+            if e.errno != ssl.SSL_ERROR_WANT_READ:
                 raise
         except ConnectionResetError as e:
             pass
@@ -523,13 +529,14 @@ class Server(Connection):
     def connect(self):
         try:
             self.conn.connect(self.addr)
-            return True
         except TimeoutError as e:
             pass
+        except ConnectionResetError as e:
+            pass
+        except socket.gaierror as e:
+            pass
         except Exception as e:
-            logger.warning("Exception when connect to remote: %r" % e)
-        
-        return False
+            logger.exception("Exception when server connect to remote: %r" % e)
 
     def wrapToSSL(self):
         try:
@@ -556,6 +563,8 @@ class Client(Connection):
             pass
         except ConnectionAbortedError as e:
             pass
+        except OSError as e:
+            pass
         except Exception as e:
             logger.exception("Exception when wrap client conn: %r" % e)
         
@@ -569,6 +578,18 @@ class Monitor(Server, threading.Thread):
         self.reconnectTime = 0
         self.WAITTIME = 5
         self.isConnected = False
+
+
+    def connect(self):
+        try:
+            self.conn.connect(self.addr)
+            return True
+        except TimeoutError as e:
+            pass
+        except Exception as e:
+            logger.warning("Exception when monitor connect to remote: %r" % e)
+
+        return False
 
     def run(self):
         while True:
@@ -660,7 +681,7 @@ def main():
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s -%(levelname)s - pid:%(process)d - %(message)s")
-    logging.disable(logging.DEBUG)
+    logging.disable(logging.INFO)
     server_addr = args.server_addr
     server_port = int(args.server_port)
     monitor_addr = args.monitor_addr
