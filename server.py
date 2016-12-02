@@ -394,7 +394,7 @@ class Proxy(threading.Thread):
                     self.server.wrapToSSL()
                 self.server.connect()
             except Exception as e:
-                raise TargetConnectionFailed(host, port, repr(e))
+                raise TargetConnectionFailed(host.decode(), int(port), repr(e))
 
             if self.request.method == b"CONNECT":
                 self.client.send(self.connection_established_pkt)
@@ -428,7 +428,7 @@ class Proxy(threading.Thread):
             except Exception as e:
                 logger.exception(e)
                 if isinstance(e, TargetConnectionFailed):
-                    self._putMessDictToMonitor(self._generateMessage(""))
+                    self._putMessDictToMonitor(self._generateMessage("%s:%d" % (e.host, e.port)))
                 else:
                     self._putMessDictToMonitor(self._generateMessage(self._getRequestUrl()))
 
