@@ -40,6 +40,20 @@ CHUNK_PARSER_STATE_WAITING_FOR_DATA = 2
 CHUNK_PARSER_STATE_COMPLETE = 3
 
 
+class DataType:
+    DOMAIN = '01'
+    DELAY = '02'
+    STATUS = '03'
+    SERVER = '04'
+    CONSTRUCTION = '05'
+    CONNECTION = '06'
+    
+class ConnectionType:
+    SUCCESS = '01'
+    CONNECTED = '02'
+    FAIL = '03'
+
+
 class ChunkParser(object):
     """HTTP chunked encoding response parser."""
     
@@ -51,7 +65,8 @@ class ChunkParser(object):
     
     def parse(self, data):
         more = True if len(data) > 0 else False
-        while more: more, data = self.process(data)
+        while more:
+            more, data = self.process(data)
     
     def process(self, data):
         if self.state == CHUNK_PARSER_STATE_WAITING_FOR_SIZE:
@@ -59,7 +74,8 @@ class ChunkParser(object):
             if line:
                 self.size = int(line, 16)
             else:
-                self.size = 0
+                # self.size = 0
+                return False, data
             self.state = CHUNK_PARSER_STATE_WAITING_FOR_DATA
         elif self.state == CHUNK_PARSER_STATE_WAITING_FOR_DATA:
             remaining = self.size - len(self.chunk)
@@ -220,7 +236,7 @@ class HTTPParser(object):
 
 
 
-class ProxyConnectionFailed(Exception):
+class TargetConnectionFailed(Exception):
     
     def __init__(self, host, port, reason):
         self.host = host
@@ -228,7 +244,7 @@ class ProxyConnectionFailed(Exception):
         self.reason = reason
     
     def __str__(self):
-        return '<ProxyConnectionFailed - %s:%s - %s>' % (self.host, self.port, self.reason)
+        return '<TargetConnectionFailed - %s:%s - %s>' % (self.host, self.port, self.reason)
 
 
 class Proxy(threading.Thread):
@@ -261,7 +277,7 @@ class Proxy(threading.Thread):
 
 
     def _isInactive(self):
-        return (self._now() - self.lastActivity).seconds > 30
+        return (self._now() - self.lastActivity).seconds > 10
 
 
     def _getCACert(self):
@@ -275,42 +291,82 @@ class Proxy(threading.Thread):
         ]) + caCertStr
 
 
+    def _gzipDecoder(self, data):
+        return zlib.decompress(data, 16 + zlib.MAX_WBITS)
+
+    def _deflateDecoder(self, data):
+        try:
+            return zlib.decompress(data, -zlib.MAX_WBITS)
+        except zlib.error as e:
+            return zlib.decompress(data)
+
+    def _generateMessage(self, url, code=-1, contentLen=-1):
+        if len(url) == 0:
+            return {DataType.CONNECTION : {ConnectionType.FAIL : ''}}
+        if code == -1 and contentLen == -1:
+            return {DataType.CONNECTION : {ConnectionType.CONNECTED : url}}
+        return {DataType.CONNECTION : {ConnectionType.SUCCESS : [url, code, contentLen]}}
+
+    def _getResCode(self):
+        return int(self.response.code.decode()) if self.response.code else -1
+
+    def _getRequestUrl(self):
+        try:
+            url = self.request.url.geturl()
+            if not url.startswith(b"http"):
+                if b'host' in self.request.headers:
+                    hostname = self.request.headers[b'host'][1]
+                else:
+                    hostname = self.request.hostname
+                if hostname == url or hostname + b'/'== url:
+                    url = b''
+                url = b"https://" + hostname + url
+        except Exception as e:
+            return ''
+
+        return url.decode()
+
     def _sendMessToMonitor(self):
 
         isUseChunkLen = True
 
-        if self.response.state < HTTP_PARSER_STATE_HEADERS_COMPLETE or self.hasSentToMonitor or not self.request.url:
+        if self.response.state < HTTP_PARSER_STATE_HEADERS_COMPLETE \
+            or self.hasSentToMonitor \
+            or not self.request.url:
             return
 
-        url = self.request.url.geturl()
-        if not url.startswith(b"http"):
-            if b'host' in self.request.headers:
-                hostname = self.request.headers[b'host'][1]
-            else:
-                hostname = self.request.hostname
-            url = b"https://" + hostname + url
-        url = url.decode()
-        code = self.response.code.decode() if self.response.code else "None"
-        contentLen = "None"
+        contentLen = -1
         if b'content-length' in self.response.headers:
-            contentLen = str(int(self.response.headers[b'content-length'][1]))
+            contentLen = int(self.response.headers[b'content-length'][1])
         elif isUseChunkLen:
-            if self.response.state == HTTP_PARSER_STATE_COMPLETE:            
-                if b"content-encoding" in self.response.headers and self.response.headers[b"content-encoding"][1] == b"gzip":
+            if self.response.state == HTTP_PARSER_STATE_COMPLETE and b"content-encoding" in self.response.headers:
+                if self.response.headers[b"content-encoding"][1] == b"gzip":
                     try:
-                        page_content = zlib.decompress(self.response.body, 16 + zlib.MAX_WBITS)
-                        contentLen = str(len(page_content))
-                    except zlib.error as ziperror:
-                        pass
-                        # logger.exception("Exception when zlib: %r" % ziperror)
+                        page_content = self._gzipDecoder(self.response.body)
+                        contentLen = len(page_content)
+                    except Exception as e:
+                        logger.exception("Exception when gzipdecoder: %r" % ziperror)
+                elif self.response.headers[b"content-encoding"][1] == b"deflate":
+                    try:
+                        page_content = self._deflateDecoder(self.response.body)
+                        contentLen = len(page_content)
+                    except Exception as e:
+                        logger.exception("Exception when deflatedecoder: %r" % ziperror)
             else:
                 return
 
 
-        message = "%s\r\n%s\r\n%s" % (url, code, contentLen)
-        logger.info("\nthreadName:%s\nurl: %s\ncode: %s\ncontent-length: %s" % (self.name, url, code, contentLen))
-        self.monitor.put(message.encode())
+        url = self._getRequestUrl()
+        code = self._getResCode()
+
+        message = self._generateMessage(url, code, contentLen)
+
+        self._putMessDictToMonitor(message)
+
+    def _putMessDictToMonitor(self, message):
+        self.monitor.put(str(message).encode())
         self.hasSentToMonitor = True
+        logger.info(str(message))
 
 
     def _processRequest(self, data): 
@@ -332,17 +388,13 @@ class Proxy(threading.Thread):
 
             self.request.hostname = host
 
-            self.server = Server(host, port)
-
-            if self.request.method == b"CONNECT":
-                self.server.wrapToSSL()
-
             try:
+                self.server = Server(host, port)
+                if self.request.method == b"CONNECT":
+                    self.server.wrapToSSL()
                 self.server.connect()
             except Exception as e:
-                self.server.isClosed = True
-                # raise ProxyConnectionFailed(host, port, repr(e))
-                raise e
+                raise TargetConnectionFailed(host, port, repr(e))
 
             if self.request.method == b"CONNECT":
                 self.client.send(self.connection_established_pkt)
@@ -374,11 +426,11 @@ class Proxy(threading.Thread):
             try:
                 self._processRequest(data)
             except Exception as e:
-                if not isinstance(e, ConnectionResetError) and \
-                        not isinstance(e, TimeoutError) and \
-                        not isinstance(e, socket.gaierror) and \
-                        not isinstance(e, ConnectionAbortedError):
-                    logger.exception(e)
+                logger.exception(e)
+                if isinstance(e, TargetConnectionFailed):
+                    self._putMessDictToMonitor(self._generateMessage(""))
+                else:
+                    self._putMessDictToMonitor(self._generateMessage(self._getRequestUrl()))
 
                 self.client.queue(CRLF.join([
                     b"HTTP/1.1 502 Bad Gateway",
@@ -430,6 +482,8 @@ class Proxy(threading.Thread):
             rlist, wlist, xlist = self._getLists()
 
             # windows may not accept three empty
+            if len(rlist) == 0 and len(wlist) == 0 and len(xlist) == 0:
+                break
 
             r, w, x = select.select(rlist, wlist, xlist, 1)
 
@@ -470,12 +524,8 @@ class Connection(object):
         size = 0
         try:
             size = self.conn.send(data)
-        except ConnectionResetError as e:
-            pass
         except Exception as e:
-            if isinstance(self.conn, socket):
-                logger.exception("Exception when send data: %r" % e)
-
+            pass
         return size
 
 
@@ -483,13 +533,8 @@ class Connection(object):
         data = b''
         try:
             data = self.conn.recv(BUFFER_SIZE)
-        except ssl.SSLError as e:
-            if e.errno != ssl.SSL_ERROR_WANT_READ:
-                raise
-        except ConnectionResetError as e:
-            pass
         except Exception as e:
-            logger.exception("Exception when receiving from %r: %r" % (self.conn, e))
+            pass
 
         if len(data) == 0:
             return
@@ -529,7 +574,10 @@ class Server(Connection):
     def __init__(self, host, port):
         super(Server, self).__init__()
         self.addr = (host, int(port))
-        self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        # support ipv6?
+        socketFamily= socket.getaddrinfo(self.addr[0], self.addr[1])[0][0]
+        self.conn = socket.socket(socketFamily, socket.SOCK_STREAM)
 
     def connect(self):
         self.conn.connect(self.addr)
@@ -564,8 +612,6 @@ class Monitor(Server, threading.Thread):
         try:
             self.conn.connect(self.addr)
             return True
-        except TimeoutError as e:
-            pass
         except Exception as e:
             logger.warning("Exception when monitor connect to remote: %r" % e)
 
@@ -637,9 +683,12 @@ class TCPListener(object):
             listener.listen(self.backlog)
 
             while True:
-                conn, addr = listener.accept()
-                logger.debug("Accepted connection %r:%r" % (conn, addr))
-                self.handleConnection(conn, addr)
+                try:
+                    conn, addr = listener.accept()
+                    logger.debug("Accepted connection %r:%r" % (conn, addr))
+                    self.handleConnection(conn, addr)
+                except Exception as e:
+                    logger.exception("Exception when start proxy: %r" % e)
 
         except Exception as e:
             logger.exception("TCPListener Exception: %r" % e)
@@ -661,7 +710,7 @@ def main():
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s -%(levelname)s - pid:%(process)d - %(message)s")
-    logging.disable(logging.INFO)
+    logging.disable(logging.DEBUG)
     server_addr = args.server_addr
     server_port = int(args.server_port)
     monitor_addr = args.monitor_addr
