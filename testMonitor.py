@@ -3,6 +3,7 @@ import socket
 import random
 import time
 import threading
+import IOfunc
 
 ip = "127.0.0.1"
 port = 10044
@@ -24,17 +25,11 @@ class Handler(threading.Thread):
 			self.conn.send(b"OK")
 
 
-			try:
-				data = data.decode()
-				url, code, contentLen = data.split("\r\n")
-				code = int(code)
-				contentLen = int(contentLen)
-			except Exception as e:
-				pass
+			
 			# if data not in testSet:
 			# 	testSet.add(data)
 			# else:
-			print(data)
+			print(IOfunc.getData(data))
 			# time.sleep(1)
 
 

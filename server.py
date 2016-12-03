@@ -11,6 +11,8 @@ import sys
 import time
 import CA
 import zlib
+import IOfunc
+
 
 PY3 = sys.version_info[0] == 3
 
@@ -364,7 +366,7 @@ class Proxy(threading.Thread):
         self._putMessDictToMonitor(message)
 
     def _putMessDictToMonitor(self, message):
-        self.monitor.put(str(message).encode())
+        self.monitor.put(message)
         self.hasSentToMonitor = True
         logger.info(str(message))
 
@@ -576,8 +578,8 @@ class Server(Connection):
         self.addr = (host, int(port))
 
         # support ipv6?
-        socketFamily= socket.getaddrinfo(self.addr[0], self.addr[1])[0][0]
-        self.conn = socket.socket(socketFamily, socket.SOCK_STREAM)
+        self.socketFamily= socket.getaddrinfo(self.addr[0], self.addr[1])[0][0]
+        self.conn = socket.socket(self.socketFamily, socket.SOCK_STREAM)
 
     def connect(self):
         self.conn.connect(self.addr)
@@ -610,6 +612,7 @@ class Monitor(Server, threading.Thread):
 
     def connect(self):
         try:
+            self.conn = socket.socket(self.socketFamily, socket.SOCK_STREAM)
             self.conn.connect(self.addr)
             return True
         except Exception as e:
@@ -642,7 +645,7 @@ class Monitor(Server, threading.Thread):
 
     def sendall(self, data):
         try:
-            self.conn.sendall(data)
+            IOfunc.send_data(self.conn, data)
         except Exception as e:
             return False
         return True
