@@ -318,9 +318,9 @@ class Proxy(threading.Thread):
                     hostname = self.request.headers[b'host'][1]
                 else:
                     hostname = self.request.hostname
-                if hostname == url or hostname + b'/'== url:
-                    url = b''
                 url = b"https://" + hostname + url
+                if self.request.method == b"CONNECT":
+                    url = b"https://" + self.request.url.path
         except Exception as e:
             return ''
 
@@ -428,7 +428,7 @@ class Proxy(threading.Thread):
             except Exception as e:
                 logger.exception(e)
                 if isinstance(e, TargetConnectionFailed):
-                    self._putMessDictToMonitor(self._generateMessage("%s:%d" % (e.host, e.port)))
+                    self._putMessDictToMonitor("")
                 else:
                     self._putMessDictToMonitor(self._generateMessage(self._getRequestUrl()))
 
