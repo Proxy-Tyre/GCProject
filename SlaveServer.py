@@ -292,5 +292,3 @@ if __name__ == '__main__':
 	r=Server()
 	# r.handle_access_message('https://www.baidu.com',200,11234)
 
-
-
