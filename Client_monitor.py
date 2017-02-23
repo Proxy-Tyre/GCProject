@@ -4,6 +4,7 @@ import threading
 import re
 import time
 import json
+import argparse
 from IOfunc import *
 
 
@@ -27,15 +28,18 @@ class Client(object):
 		self.domain_delay={}
 		self.server_status={}
 		# self.sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-		self.HOST='127.0.0.1'
-		self.PORT=1888
-
+		
+		self.set_host_port()
 		threading.Thread(target=self.debug).start()
 		threading.Thread(target=self.update_server_status,args=(interval_time,)).start()
 
-	def set_host_port(self,host,port):
-		self.HOST = host
-		self.PORT = port
+	def set_host_port(self):
+		parser = argparse.ArgumentParser()
+		parser.add_argument("--host_addr", default="127.0.0.1", help="Default: 127.0.0.1")
+		parser.add_argument("--host_port", default="1888", help="Default: 1888")
+		args = parser.parse_args()
+		self.HOST=args.host_addr
+		self.PORT=(int)(args.host_port)
 
 	def debug(self):
 		while True:

@@ -63,7 +63,7 @@ class Server(object):
 
 
 	def listen_client(self):
-		print('start listen for client...')
+		print('start listen for client at port: ',self.PORT_CLIENT)
 		
 		self.socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
 		self.socket.bind((self.HOST,self.PORT_CLIENT))
@@ -75,7 +75,7 @@ class Server(object):
 		self.socket.close()
 
 	def listen_server(self):
-		print('start listen for server...')
+		print('start listen for server at port: ',self.PORT_SERVER)
 
 		self.socket_s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
 		self.socket_s.bind((self.HOST,self.PORT_SERVER))

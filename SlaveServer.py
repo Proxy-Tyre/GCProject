@@ -5,6 +5,7 @@ import subprocess
 import multiprocessing
 import json
 import time
+import argparse
 from urllib import request
 from IOfunc import *
 
@@ -34,25 +35,38 @@ class Server(object):
 		self.domain_status={}             # {domain:[status,access_count,stick_time,start_time]}
 		self.domain_status_judge_table={}       # {domain:[(success_url,200,length),(second_last_url,httpcode,length),(last_url,httpcode,length)]}
 		
-		self.HOST = '127.0.0.1'
-		self.PORT = 2888
+		self.set_addr_port()
+
 
 		threading.Thread(target=self.debug).start()
 
 		threading.Thread(target=self.report,args=(interval_time,)).start()
 
-	def set_host_port(self,host,port):
-		self.HOST = host
-		self.PORT = port
+	def set_addr_port(self):
+		parser = argparse.ArgumentParser()
+		parser.add_argument("--host_addr", default="127.0.0.1", help="Default: 127.0.0.1")
+		parser.add_argument("--host_port", default="2888", help="Default: 2888")
+		parser.add_argument("--mesg_addr", default="127.0.0.1", help="Default: 127.0.0.1")
+		parser.add_argument("--mesg_port", default="10044", help="Default: 10044")
+		args = parser.parse_args()
+		self.host_addr = (str)(args.host_addr)
+		self.host_port = (int)(args.host_port)
+		self.mesg_port = (int)(args.mesg_port)
+		self.mesg_addr = (str)(args.mesg_addr)
+		print('log: host addr ',self.host_addr)
+		print('log: host port ',self.host_port)
 
 	def connect(self):
 		while True:
 			try:
 				sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-				sock.connect((self.HOST,self.PORT))
+				sock.connect((self.host_addr,self.host_port))
+				print('success to connect the host_server: ',self.host_addr,self.host_port)
 				return sock
-			except:
-				continue
+			except Exception as e:
+				print(e)
+				#print('fail to connect the host_server: ',self.host_addr,self.host_port)
+			time.sleep(1)
 		
 
 	def debug(self):
@@ -134,12 +148,11 @@ class Server(object):
 
 	# below are used to receive the 
 	def recv_access_message(self):
-		ip = "127.0.0.1"
-		port = 10044
 		listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		listener.bind((ip, port))
+		listener.bind((self.mesg_addr, int(self.mesg_port)))
 		listener.listen(100)
-		print('ready to receive message')
+		print('log: message addr ',self.mesg_addr)
+		print('log: message port ',self.mesg_port)
 
 		while True:
 			try:
