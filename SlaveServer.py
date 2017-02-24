@@ -18,6 +18,7 @@ BUFSIZE=1024
 
 STATUS_OK = 1
 STATUS_NO = 0
+STATUS_NOT_SURE = 2
 
 PRECISION = 50
 
@@ -26,10 +27,10 @@ TIMEOUT = 3000
 
 class Server(object):
 	"""docstring for Server"""
-	def __init__(self,interval_time=10,record_stick_time=300):
+	def __init__(self):
 		super(Server, self).__init__()
-		self.RECORD_STICK_TIME = record_stick_time
-		self.INTERVAL_TIME = interval_time  
+		# self.RECORD_STICK_TIME = record_stick_time
+		# self.INTERVAL_TIME = interval_time  
 
 		self.domain_delay={}      
 		self.domain_status={}             # {domain:[status,access_count,stick_time,start_time]}
@@ -37,10 +38,18 @@ class Server(object):
 		
 		self.set_addr_port()
 
+		self.recv_data_pool = []
+
 
 		threading.Thread(target=self.debug).start()
 
-		threading.Thread(target=self.report,args=(interval_time,)).start()
+		threading.Thread(target=self.handle_access_message).start()
+
+		threading.Thread(target = self.clear_old_record).start()
+
+		threading.Thread(target=self.report).start()
+
+
 
 	def set_addr_port(self):
 		parser = argparse.ArgumentParser()
@@ -48,13 +57,23 @@ class Server(object):
 		parser.add_argument("--host_port", default="2888", help="Default: 2888")
 		parser.add_argument("--mesg_addr", default="0.0.0.0", help="Default: 0.0.0.0")
 		parser.add_argument("--mesg_port", default="10044", help="Default: 10044")
+		parser.add_argument("--hold_time", default="300", help="Default: 300")
+		parser.add_argument("--report_freq", default="10", help="Default: 10")
+		parser.add_argument("--clear_freq", default="14400", help="Default: 14400")
 		args = parser.parse_args()
 		self.host_addr = (str)(args.host_addr)
 		self.host_port = (int)(args.host_port)
 		self.mesg_port = (int)(args.mesg_port)
 		self.mesg_addr = (str)(args.mesg_addr)
-		print('log: host addr ',self.host_addr)
-		print('log: host port ',self.host_port)
+		self.RECORD_STICK_TIME = (int)(args.hold_time)
+		self.INTERVAL_TIME = (int)(args.report_freq)
+		self.clear_freq = (int)(args.clear_freq)
+
+	def clear_old_record(self):
+		time.sleep(self.clear_freq)
+		for domain in self.domain_status:
+			if self.recode_is_timeout(self.domain_status[domain]):
+				self.domain_status.pop(domain)
 
 	def connect(self):
 		while True:
@@ -64,16 +83,17 @@ class Server(object):
 				print('success to connect the host_server: ',self.host_addr,self.host_port)
 				return sock
 			except Exception as e:
-				print(e)
-				#print('fail to connect the host_server: ',self.host_addr,self.host_port)
-			time.sleep(1)
+				# print(e)
+				print('fail to connect the host_server: ',self.host_addr,self.host_port)
+			time.sleep(5)
 		
 
 	def debug(self):
 		while True:
 			print_all('Slave_server' , {'domain_delay':self.domain_delay,
 				'domain_status':self.domain_status,
-				'domain_status_judge_table':self.domain_status_judge_table})
+				'recv_data_pool size':len(self.recv_data_pool)})
+			# ,'domain_status_judge_table':self.domain_status_judge_table})
 			time.sleep(5)
 
 	def add_domain(self,domain):
@@ -85,7 +105,7 @@ class Server(object):
 					self.add_domain(domain_item)
 
 
-	def report(self,interval_time):
+	def report(self):
 		threading.Thread(target=self.recv_access_message).start()
 		while True:
 			t = threading.Thread(target=self.update_domain_delay)
@@ -111,7 +131,7 @@ class Server(object):
 				if datatype == DataType.DOMAIN:
 					self.add_domain(data_list[datatype])
 			
-			time.sleep(interval_time)
+			time.sleep(self.INTERVAL_TIME)
 
 	def ping_for_windows(self,host): 
 		cmd_status,cmd_result = subprocess.getstatusoutput('ping '+host)
@@ -156,19 +176,32 @@ class Server(object):
 
 		while True:
 			try:
+				print('.........waiting for message giver...........')
 				conn, addr = listener.accept()
 				print("connect from %s:%d" % addr)
+				count = 5
 				while True:
 					try:
 						data = recv_data(conn,BUFSIZE)
-						print(data)
-						for datatype in data:
-							if datatype == DataType.CONNECTION:
-								threading.Thread(target=self.handle_access_message,args=(data[datatype],)).start()
+
 						if not data:
-							print('recieved none data, conn close')
-							conn.close()
-							break
+							if count > 0:
+								count = count - 1
+								continue
+							else:
+								print('connection maybe close')
+								conn.close()
+								break
+						count = 5
+
+						self.recv_data_pool.append(data)
+						# for datatype in data:
+						# 	if datatype == DataType.CONNECTION:
+						# 		threading.Thread(target=self.handle_access_message,args=(data[datatype],)).start()
+						# if not data:
+						# 	print('recieved none data, conn close')
+						# 	conn.close()
+						# 	break
 					except Exception as e:
 						print(e)
 						break
@@ -178,16 +211,28 @@ class Server(object):
 			except Exception as e:
 				print(e)
 
+		print('not recieving message!!!!!')
+
+
+	def handle_access_message(self):
 		while True:
-			print('do not recieving message!!!!!')
-
-
-	def handle_access_message(self,data):
-		for connectiontype in data:
-			if connectiontype == ConnectionType.SUCCESS:
-				self._handle_success_connection_message(data[connectiontype])
-			if connectiontype == ConnectionType.CONNECTED:
-				self._handle_connected_connection_message(data[connectiontype])
+			while self.recv_data_pool:
+				data = self.recv_data_pool.pop()
+				print(data)
+				if not data:
+					continue
+				try:
+					for datatype in data:
+						if datatype == DataType.CONNECTION:
+							tempdata = data[datatype]
+							for connectiontype in tempdata:
+								if connectiontype == ConnectionType.SUCCESS:
+									self._handle_success_connection_message(tempdata[connectiontype])
+								if connectiontype == ConnectionType.CONNECTED:
+									self._handle_connected_connection_message(tempdata[connectiontype])
+				except Exception as e:
+					print(e)
+			time.sleep(1)
 			
 			
 	def _add_count_to_record(self,domain):
@@ -198,7 +243,7 @@ class Server(object):
 
 	def _refresh_domain_status(self,domain):
 		self.domain_status[domain]=[]
-		self.domain_status[domain].append(STATUS_OK)
+		self.domain_status[domain].append(STATUS_NOT_SURE)
 		self.domain_status[domain].append(1)
 		self.domain_status[domain].append(0)
 		self.domain_status[domain].append(round(time.time()))
@@ -214,6 +259,10 @@ class Server(object):
 				self._add_count_to_record(domain)
 			else:
 				self._refresh_domain_status(domain)
+			if not code:
+				code = 0
+			if not contentLen:
+				contentLen = 0
 			self.update_domain_status_judge_table(url,code,contentLen)
 
 
@@ -221,7 +270,11 @@ class Server(object):
 	def _handle_connected_connection_message(self,url):
 		domain = get_domain(url)
 		if domain:
-			self._add_count_to_record(domain)
+			if domain in self.domain_status and not self.recode_is_timeout(self.domain_status[domain]):
+				self._add_count_to_record(domain)
+			else:
+				self._refresh_domain_status(domain)
+			
 
 
 
@@ -236,8 +289,10 @@ class Server(object):
 
 		if domain not in self.domain_status_judge_table:
 			if code == 200:
+
 				# threading.Thread(target = self.add_first_success_to_judge_table,args =(url,)).start()
 				self.add_first_success_to_judge_table(url,code,content_length)
+				self.domain_status[domain][0] = STATUS_OK
 		else:
 			if len(self.domain_status_judge_table[domain]) > 2:
 				if self.check_at_this_access(url,code,content_length):
@@ -267,9 +322,9 @@ class Server(object):
 
 	def check_at_this_access(self,url,code,content_length):
 		domain=get_domain(url)
-		if url != self.domain_status_judge_table[domain][2][0] and code == self.domain_status_judge_table[domain][2][1] and content_length < self.domain_status_judge_table[domain][2][2]+PRECISION and content_length > self.domain_status_judge_table[domain][2][2]-PRECISION:
-			if url != self.domain_status_judge_table[domain][1][0] and code == self.domain_status_judge_table[domain][1][1] and content_length < self.domain_status_judge_table[domain][1][2]+PRECISION and content_length > self.domain_status_judge_table[domain][1][2]-PRECISION:
-				if url != self.domain_status_judge_table[domain][0][0] and code == self.domain_status_judge_table[domain][0][1] and content_length < self.domain_status_judge_table[domain][0][2]+PRECISION and content_length > self.domain_status_judge_table[domain][0][2]-PRECISION:
+		if code == self.domain_status_judge_table[domain][2][1] and content_length < self.domain_status_judge_table[domain][2][2]+PRECISION and content_length > self.domain_status_judge_table[domain][2][2]-PRECISION:
+			if code == self.domain_status_judge_table[domain][1][1] and content_length < self.domain_status_judge_table[domain][1][2]+PRECISION and content_length > self.domain_status_judge_table[domain][1][2]-PRECISION:
+				if code == self.domain_status_judge_table[domain][0][1] and content_length < self.domain_status_judge_table[domain][0][2]+PRECISION and content_length > self.domain_status_judge_table[domain][0][2]-PRECISION:
 					status = self.domain_status[domain]
 					status[0] = STATUS_NO
 					status[2] = time.time()-status[3]					

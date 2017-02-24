@@ -432,11 +432,11 @@ class Proxy(threading.Thread):
                 self._processRequest(data)
             except Exception as e:
                 
-                if isinstance(e, TargetConnectionFailed):
-                    self._putMessDictToMonitor("")
-                else:
-                    logger.exception(e)
-                    self._putMessDictToMonitor(self._generateMessage(self._getRequestUrl()))
+                # if isinstance(e, TargetConnectionFailed):
+                #     self._putMessDictToMonitor("")
+                # else:
+                #     logger.exception(e)
+                #     self._putMessDictToMonitor(self._generateMessage(self._getRequestUrl()))
 
                 self.client.queue(CRLF.join([
                     b"HTTP/1.1 502 Bad Gateway",
