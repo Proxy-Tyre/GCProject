@@ -97,9 +97,10 @@ class ChunkParser(object):
 class HTTPParser(object):
     """HTTP request/response parser."""
     
-    def __init__(self, type=None):
+    def __init__(self, type=None, proxy=None):
         self.type = type if type else HTTP_REQUEST_PARSER
         self.hostname = ""
+        self.proxy = proxy
         self.initAll()
 
     def initAll(self):
@@ -118,6 +119,8 @@ class HTTPParser(object):
         self.version = None
         
         self.chunker = None
+
+        self.proxy.hasSentToMonitor = False
     
     def parse(self, data):
         if self.state == HTTP_PARSER_STATE_COMPLETE and self.type == HTTP_REQUEST_PARSER:
@@ -260,8 +263,8 @@ class Proxy(threading.Thread):
         self.startTime = self._now()
         self.lastActivity = self.startTime
 
-        self.request = HTTPParser()
-        self.response = HTTPParser(HTTP_RESPONSE_PARSER)
+        self.request = HTTPParser(proxy=self)
+        self.response = HTTPParser(HTTP_RESPONSE_PARSER, self)
 
         self.connection_established_pkt = CRLF.join([
             b"HTTP/1.1 200 Connection established",
@@ -428,10 +431,11 @@ class Proxy(threading.Thread):
             try:
                 self._processRequest(data)
             except Exception as e:
-                logger.exception(e)
+                
                 if isinstance(e, TargetConnectionFailed):
                     self._putMessDictToMonitor("")
                 else:
+                    logger.exception(e)
                     self._putMessDictToMonitor(self._generateMessage(self._getRequestUrl()))
 
                 self.client.queue(CRLF.join([
@@ -639,9 +643,9 @@ class Monitor(Server, threading.Thread):
             isSend = self.sendall(data)
             if not isSend:
                 break
-            res = self.recv()
-            if not res:
-                break
+            # res = self.recv()
+            # if not res:
+            #     break
 
     def sendall(self, data):
         try:

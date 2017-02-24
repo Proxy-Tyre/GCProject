@@ -46,7 +46,7 @@ class Server(object):
 		parser = argparse.ArgumentParser()
 		parser.add_argument("--host_addr", default="127.0.0.1", help="Default: 127.0.0.1")
 		parser.add_argument("--host_port", default="2888", help="Default: 2888")
-		parser.add_argument("--mesg_addr", default="127.0.0.1", help="Default: 127.0.0.1")
+		parser.add_argument("--mesg_addr", default="0.0.0.0", help="Default: 0.0.0.0")
 		parser.add_argument("--mesg_port", default="10044", help="Default: 10044")
 		args = parser.parse_args()
 		self.host_addr = (str)(args.host_addr)
@@ -158,14 +158,28 @@ class Server(object):
 			try:
 				conn, addr = listener.accept()
 				print("connect from %s:%d" % addr)
-				data = recv_data(conn,BUFSIZE)
-				for datatype in data:
-					if datatype == DataType.CONNECTION:
-						threading.Thread(target=self.handle_access_message,args=(data[datatype],)).start()
+				while True:
+					try:
+						data = recv_data(conn,BUFSIZE)
+						print(data)
+						for datatype in data:
+							if datatype == DataType.CONNECTION:
+								threading.Thread(target=self.handle_access_message,args=(data[datatype],)).start()
+						if not data:
+							print('recieved none data, conn close')
+							conn.close()
+							break
+					except Exception as e:
+						print(e)
+						break
+
 			except KeyboardInterrupt:
 				break
 			except Exception as e:
 				print(e)
+
+		while True:
+			print('do not recieving message!!!!!')
 
 
 	def handle_access_message(self,data):

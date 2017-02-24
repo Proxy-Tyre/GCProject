@@ -4,7 +4,7 @@ import time
 
 while(True):
 	try:
-		req = request.Request('https://github.com/')
+		req = request.Request('http://www.scut.edu.cn')
 		req.set_proxy(host='128.199.90.107:10042',type='https')
 
 		request.urlopen(req,timeout=8)
